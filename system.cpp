@@ -897,7 +897,8 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     int no_b   = 10;     // Number of row in block which are occupied by B
     int block_row = 32; // Number of data can be stored in one row of block
     int no_block = ceil((float)A_col / (float)block_row);
-    int a_sb_y = ceil((float)A_col/(float) no_a);
+    int a_sb_y = ceil((float)A_row/(float) no_a);
+    int b_sb_y = ceil((float)B_col/(float) no_b);
 
 
     AddrT data_a_p = 0;
@@ -913,19 +914,20 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
    	Request *request;
 
     //Fill all A to PIM unit
+    request = new Request(Request::Type::SystemRow2Col);
     for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
     	//Move a no_a rows of A to 32 blocks, each block has no_a*32 data.
     	if(a_y == a_sb_y -1){
-    		request = new Request(Request::Type::SystemRow2Col);
     		for (int i = 0; i < no_block; i++){//i: index of the current block
     			for (int j = 0; j < A_col - a_y*no_a; j++){//i: index of the row in current block{
     				request->addAddr(data_a_p + (i*no_a+j)*_ncols ,block_row*32);
     				request->addAddr(pim_a_p + a_p  + j + i*_ncols*_nrows, block_row*32);
     			}
     		}
-
+    		//update data_a_p and pim_a_p
+    		data_a_p =+ (AddrT) no_block*(A_col - a_y*no_a)*block_row*32;
+    		pim_a_p  =+ (AddrT) A_col/block_row*_ncols*_nrows;
     	}else{
-    		request = new Request(Request::Type::SystemRow2Col);
     		for (int i = 0; i < no_block; i++){//i: index of the current block
     			for (int j = 0; j < no_a; j++){//i: index of the row in current block{
     				request->addAddr(data_a_p + (i*no_a+j)*_ncols ,block_row*32);
@@ -938,19 +940,25 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     	}
     }
 
-    //Move a no_b cols of B to 32 blocks, each block has no_b*32 data.
-    data_b_p = storage_start_address + A_col/block_row*no_a*block_row*32;
+    data_b_p = data_a_p;
     pim_b_p  = pim_start_address;
-    for (int i = 0; i < no_block; i++){//i: index of the current block
-    	for (int j = 0; j < no_b; j++){//i: index of the row in current block{
-    		request->addAddr(data_b_p + (i*no_b+j)*_ncols ,block_row*32);
-    		request->addAddr(pim_b_p + b_p  + j + i*_ncols*_nrows, block_row*32);
-    	}
-	}
-    //update data_b_p and pim_b_p
-    data_b_p =+ (AddrT) B_col/block_row*no_b;
-    pim_b_p  =+ (AddrT) B_col/block_row*_ncols*_nrows;
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //Fill block-col of B to each PIM
+    for (int b_x = 0; b_x < b_sb_y; b_x++){// no of sub block in y direction
 
+    }
+    //Move a no_b cols of B to 32*ceil(A_rows/no_a) blocks, each block has no_b*32 data.
+    for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+   		for (int i = 0; i < no_block; i++){//i: index of the current block
+   			for (int j = 0; j < no_b; j++){//j: index of the row in current block{
+    			request->addAddr(data_b_p + (i*no_b+j)*_ncols ,block_row*32);
+    			request->addAddr(pim_b_p + b_p  + j + i*_ncols*_nrows + a_y*no_block*_ncols*_nrows, block_row*32);
+   			}
+    	}
+    }
+    //update data_b_p and pim_b_p
+    data_b_p =+ (AddrT) no_block*block_row*no_b*32;
+    //pim_b_p  =+ (AddrT) B_col/block_row*_ncols*_nrows;
     requests.push_back(*request);
 
 
@@ -958,28 +966,34 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     for (int ii = 0; ii <no_a;ii++){//ii: index of current A col
     	//Move col ii  of A to mul1
     	request = new Request(Request::Type::ColMv);
-    	for (int i = 0; i < no_block; i++){//i: index of the current block
-    		request->addAddr(pim_start_address + i*_ncols*_nrows + a_p + ii, 32*32);
-    		request->addAddr(pim_start_address + i*_ncols*_nrows + mul1_p + ii, 32*32);
-    		request->addAddr(pim_start_address + i*_ncols*_nrows + b_p, 32*32);
-    		request->addAddr(pim_start_address + i*_ncols*_nrows + mul2_p, 32*32);
+    	for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    		for (int i = 0; i < no_block; i++){//i: index of the current block
+    			request->addAddr(pim_start_address + (i + a_y*no_block)*_ncols*_nrows + a_p + ii, 32*32);
+    			request->addAddr(pim_start_address + (i + a_y*no_block)*_ncols*_nrows + mul1_p + ii, 32*32);
+    			request->addAddr(pim_start_address + (i + a_y*no_block)*_ncols*_nrows + b_p, 32*32);
+    			request->addAddr(pim_start_address + (i + a_y*no_block)*_ncols*_nrows + mul2_p, 32*32);
+    		}
     	}
     	requests.push_back(*request);
 
     	//Move col jj of B to mul2
     	for (int jj = 0; jj<no_b; jj++){//jj: index of the current B col
     		request = new Request(Request::Type::ColMv);
-    		for (int i = 0; i < (B_row/block_row); i++){//i: index of the current block
-    			request->addAddr(pim_start_address + i*_ncols*_nrows + b_p + jj, 32*32);
-    			request->addAddr(pim_start_address + i*_ncols*_nrows + mul2_p, 32*32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			for (int i = 0; i < (B_row/block_row); i++){//i: index of the current block
+    				request->addAddr(pim_start_address + (i + a_y*no_block)*_ncols*_nrows + b_p + jj, 32*32);
+    				request->addAddr(pim_start_address + (i + a_y*no_block)*_ncols*_nrows + mul2_p, 32*32);
+    			}
     		}
     		requests.push_back(*request);
             //multiply mul1 and mul2, store them to ps
     		request = new Request(Request::Type::RowMul);
-    		for (int i = 0; i < no_block; i++){//i: index of the current block
-    			for (int j = 0; j < block_row; j++){//j: do multiplication for j row of i block
-    				request->addAddr(pim_start_address + i*_ncols*_nrows + j*_ncols, 2*32);
-    				request->addAddr(pim_start_address + i*_ncols*_nrows + j*_ncols + ps_p + jj, 32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			for (int i = 0; i < no_block; i++){//i: index of the current block
+    				for (int j = 0; j < block_row; j++){//j: do multiplication for j row of i block
+    					request->addAddr(pim_start_address + (i + a_y*no_block)*_ncols*_nrows + j*_ncols, 2*32);
+    					request->addAddr(pim_start_address + (i + a_y*no_block)*_ncols*_nrows + j*_ncols + ps_p + jj, 32);
+    				}
     			}
     		}
     		requests.push_back(*request);
@@ -987,10 +1001,12 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
 
     	//Send partial sum to another block for addition
     	request = new Request(Request::Type::SystemCol2Col);
-    	for (int i = 0; i < no_block; i++){//i: index of the set of partial sum/ equal to number of block
-    		for (int j = 0; j < no_a; j++){//j: index of the col in current block{
-    			request->addAddr(pim_start_address+ i*_ncols*_nrows+ ps_p + j ,32*32);
-    			request->addAddr(sum_p + (i/2)*_ncols*_nrows+ no_a*(i%2) + j ,32*32);
+    	for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    		for (int i = 0; i < no_block; i++){//i: index of the set of partial sum/ equal to number of block
+    			for (int j = 0; j < no_a; j++){//j: index of the col in current block{
+    				request->addAddr(pim_start_address+ (i + a_y*no_block)*_ncols*_nrows+ ps_p + j ,32*32);
+    				request->addAddr(sum_p + (a_y*no_block/2 + i/2)*_ncols*_nrows+ no_a*(i%2) + j ,32*32);
+    			}
     		}
     	}
     	requests.push_back(*request);
@@ -999,33 +1015,41 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     	for (int kk = 1; kk < block_row; kk++){//i: index of the set of partial sum// equal to number of block
     		//Move the next number to be added to the second row
     		request = new Request(Request::Type::RowMv);
-    		for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
-    			request->addAddr(sum_p + i*_ncols*_nrows + kk*_ncols,no_a*2*32);
-    			request->addAddr(sum_p + i*_ncols*_nrows + _ncols,no_a*2*32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
+    				request->addAddr(sum_p + (i + a_y*no_block /2)*_ncols*_nrows + kk*_ncols,no_a*2*32);
+    				request->addAddr(sum_p + (i + a_y*no_block /2)*_ncols*_nrows + _ncols,no_a*2*32);
+    			}
     		}
     		requests.push_back(*request);
 
     		//Add first two rows and store the results to the first/second rows [20:29]
     		request = new Request(Request::Type::ColAdd);
-    		for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
-    			for (int j = 0; j < no_a*2; j++){//j: index of the col in current block{
-    				request->addAddr(sum_p + i*_ncols*_nrows + j ,2*32);
-    				request->addAddr(sum_p + i*_ncols*_nrows + no_a + (j/10)*_ncols + (j%10) ,2*32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
+    				for (int j = 0; j < no_a*2; j++){//j: index of the col in current block{
+    					request->addAddr(sum_p + (i + a_y*no_block /2)*_ncols*_nrows + j ,2*32);
+    					request->addAddr(sum_p + (i + a_y*no_block /2)*_ncols*_nrows + no_a + (j/10)*_ncols + (j%10) ,2*32);
+    				}
     			}
     		}
     		requests.push_back(*request);
 
     		//Move the intermedia results to the begining of the first row
     		request = new Request(Request::Type::RowBitwise);
-    		for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
-    			request->addAddr(sum_p + i*_ncols*_nrows + no_a,no_a*32);
-    			request->addAddr(sum_p + i*_ncols*_nrows ,no_a*32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
+    				request->addAddr(sum_p + (i + a_y*no_block /2)*_ncols*_nrows + no_a,no_a*32);
+    				request->addAddr(sum_p + (i + a_y*no_block /2)*_ncols*_nrows ,no_a*32);
+    			}
     		}
     		requests.push_back(*request);
     		request = new Request(Request::Type::RowMv);
-    		for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
-    			request->addAddr(sum_p + i*_ncols*_nrows + _ncols + no_a,no_a*32);
-    			request->addAddr(sum_p + i*_ncols*_nrows + no_a*2,no_a*32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
+    				request->addAddr(sum_p + (i + a_y*no_block /2)*_ncols*_nrows + _ncols + no_a,no_a*32);
+    				request->addAddr(sum_p + (i + a_y*no_block /2)*_ncols*_nrows + no_a*2,no_a*32);
+    			}
     		}
     		requests.push_back(*request);
 
@@ -1033,9 +1057,11 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     	//Do addition for all block_row blocks
     	//Move all the ps to the first block
     	request = new Request(Request::Type::SystemRow2Row);
-    	for (int i = 1; i < no_block/2; i++){//i: index of the current block
-    		request->addAddr(sum_p + i*_ncols*_nrows, no_a*2*32);
-    		request->addAddr(sum_p + i*_ncols ,no_a*2*32);
+    	for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    		for (int i = 1; i < no_block/2; i++){//i: index of the current block
+    			request->addAddr(sum_p + (i + a_y*no_block /2)*_ncols*_nrows, no_a*2*32);
+    			request->addAddr(sum_p + i*_ncols + a_y*no_block/2*_ncols*_nrows,no_a*2*32);
+    		}
     	}
     	requests.push_back(*request);
 
@@ -1043,48 +1069,60 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     	for (int kk = 1; kk < block_row/2; kk++){//i: index of the set of partial sum// equal to number of block
     		//Move the next number to be added to the second row
     		request = new Request(Request::Type::RowMv);
-    		request->addAddr(sum_p + kk*_ncols,no_a*2*32);
-    		request->addAddr(sum_p + _ncols,no_a*2*32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows + kk*_ncols,no_a*2*32);
+    			request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows + _ncols,no_a*2*32);
+    		}
     		requests.push_back(*request);
 
     		//Add first two rows and store the results to the first row [10:19]
     		request = new Request(Request::Type::ColAdd);
-    		for (int j = 0; j < no_a*2; j++){//j: index of the col in current block{
-    			request->addAddr(sum_p + j ,2*32);
-   				request->addAddr(sum_p + no_a + (j/10)*_ncols + (j%10) ,2*32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			for (int j = 0; j < no_a*2; j++){//j: index of the col in current block{
+    				request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows + j ,2*32);
+    				request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows + no_a + (j/10)*_ncols + (j%10) ,2*32);
+    			}
     		}
     		requests.push_back(*request);
 
     		//Move the intermedia results to the begining of the first row
     		request = new Request(Request::Type::RowBitwise);
-    		request->addAddr(sum_p + no_a,no_a*32);
-    		request->addAddr(sum_p , no_a*32);
-    		requests.push_back(*request);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows + no_a,no_a*32);
+    			request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows, no_a*32);
+    			requests.push_back(*request);
+    		}
 
     		request = new Request(Request::Type::RowMv);
-    		request->addAddr(sum_p + _ncols + no_a,no_a*32);
-    		request->addAddr(sum_p + no_a*2,no_a*32);
-    		requests.push_back(*request);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows + _ncols + no_a,no_a*32);
+    			request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows + no_a*2,no_a*32);
+    			requests.push_back(*request);
+    		}
     	}
     		request = new Request(Request::Type::RowMv);
-    		request->addAddr(sum_p ,no_a*32);
-    		request->addAddr(sum_p + _ncols + no_a,no_a*32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows,no_a*32);
+    			request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows + _ncols + no_a,no_a*32);
+    		}
     		requests.push_back(*request);
 
     		request = new Request(Request::Type::ColAdd);
-    		for (int i = 0; i < no_a; i++){//j: index of the col in current block{
-    			request->addAddr(sum_p + no_a ,2*32);
-    			request->addAddr(sum_p ,no_a*32);
+    		for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    			for (int i = 0; i < no_a; i++){//j: index of the col in current block{
+    				request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows + no_a ,2*32);
+    				request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows, no_a*32);
+    			}
     		}
     		requests.push_back(*request);
 
     	//Store the 10 result back to storage unit
     	request = new Request(Request::Type::SystemRow2Row);
-    	request->addAddr(sum_p, no_a*32);
-    	request->addAddr(data_a_p + ii*_ncols ,no_a*32);
+    	for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    		request->addAddr(sum_p + a_y*no_block/2*_ncols*_nrows, no_a*32);
+    		request->addAddr(storage_start_address + a_y* no_b*no_block*block_row*32 + ii*_ncols ,no_a*32);
+    	}
     	requests.push_back(*request);
-
-
     }
 
     for (unsigned int i = 0; i < requests.size(); i++)
