@@ -897,10 +897,7 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     int no_b   = 10;     // Number of row in block which are occupied by B
     int block_row = 32; // Number of data can be stored in one row of block
     int no_block = ceil((float)A_col / (float)block_row);
-    //if the 320 data are in different rows
-    int cur_row_data = 0;
-    AddrT diff_data_p = 0;
-    AddrT diff_pim_p  = 0;
+    int a_sb_y = ceil((float)A_col/(float) no_a);
 
 
     AddrT data_a_p = 0;
@@ -912,34 +909,34 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     data_a_p = storage_start_address;
     pim_a_p  = pim_start_address;
 
-    //Move a no_a rows of A to 32 blocks, each block has no_a*32 data.
-    std::vector<Request> requests;
-    Request *request;
-    request = new Request(Request::Type::SystemRow2Col);
-    for (int i = 0; i < no_block; i++){//i: index of the current block
-    	for (int j = 0; j < no_a; j++){//i: index of the row in current block{
-    		request->addAddr(data_a_p + (i*no_a+j)*_ncols ,block_row*32);
-    		request->addAddr(pim_a_p + a_p  + j + i*_ncols*_nrows, block_row*32);
-    		/*if(((data_a_p + i * no_a*block_row*32)%_ncols + block_row*32) > _ncols){
-    			cur_row_data = _ncols - (data_a_p + i * no_a*block_row*32)%_ncols;
-    			diff_data_p = ((data_a_p + i * no_a*block_row*32)/_ncols + 1)*_ncols;
-    			diff_pim_p = pim_a_p + a_p + i*_ncols*_nrows + cur_row_data;
+   	std::vector<Request> requests;
+   	Request *request;
 
-    			request->addAddr(data_a_p + i * no_a*block_row*32 ,cur_row_data);
-    			request->addAddr(pim_a_p + a_p + i*_ncols*_nrows ,cur_row_data);
-    			request->addAddr(diff_data_p ,no_a*block_row*32 - cur_row_data);
-    			request->addAddr(diff_pim_p,no_a*block_row*32 - cur_row_data);
+    //Fill all A to PIM unit
+    for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    	//Move a no_a rows of A to 32 blocks, each block has no_a*32 data.
+    	if(a_y == a_sb_y -1){
+    		request = new Request(Request::Type::SystemRow2Col);
+    		for (int i = 0; i < no_block; i++){//i: index of the current block
+    			for (int j = 0; j < A_col - a_y*no_a; j++){//i: index of the row in current block{
+    				request->addAddr(data_a_p + (i*no_a+j)*_ncols ,block_row*32);
+    				request->addAddr(pim_a_p + a_p  + j + i*_ncols*_nrows, block_row*32);
+    			}
+    		}
 
-    		}else{
-    			request->addAddr(data_a_p + i * no_a*block_row*32 ,no_a*block_row*32);
-    			request->addAddr(pim_a_p + a_p + i*_ncols*_nrows, no_a*block_row*32);
-    		}*/
-
+    	}else{
+    		request = new Request(Request::Type::SystemRow2Col);
+    		for (int i = 0; i < no_block; i++){//i: index of the current block
+    			for (int j = 0; j < no_a; j++){//i: index of the row in current block{
+    				request->addAddr(data_a_p + (i*no_a+j)*_ncols ,block_row*32);
+    				request->addAddr(pim_a_p + a_p  + j + i*_ncols*_nrows, block_row*32);
+    			}
+    		}
+    		//update data_a_p and pim_a_p
+    		data_a_p =+ (AddrT) no_block*no_a*block_row*32;
+    		pim_a_p  =+ (AddrT) A_col/block_row*_ncols*_nrows;
     	}
-	}
-    //update data_a_p and pim_a_p
-    data_a_p =+ (AddrT) A_col/block_row*no_a;
-    pim_a_p  =+ (AddrT) A_col/block_row*_ncols*_nrows;
+    }
 
     //Move a no_b cols of B to 32 blocks, each block has no_b*32 data.
     data_b_p = storage_start_address + A_col/block_row*no_a*block_row*32;
@@ -948,20 +945,6 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     	for (int j = 0; j < no_b; j++){//i: index of the row in current block{
     		request->addAddr(data_b_p + (i*no_b+j)*_ncols ,block_row*32);
     		request->addAddr(pim_b_p + b_p  + j + i*_ncols*_nrows, block_row*32);
-    	/*if(((data_b_p + i * no_b*block_row*32)%_ncols + no_b*block_row*32) > _ncols){
-    		cur_row_data = _ncols - (data_b_p + i * no_b*block_row*32)%_ncols;
-    		diff_data_p = ((data_b_p + i * no_b*block_row*32)/_ncols + 1)*_ncols;
-    		diff_pim_p = pim_b_p + b_p + i*_ncols*_nrows + cur_row_data;
-
-    		request->addAddr(data_b_p + i * no_a*block_row*32 ,cur_row_data);
-    		request->addAddr(pim_b_p + b_p + i*_ncols*_nrows ,cur_row_data);
-    		request->addAddr(diff_data_p ,no_b*block_row*32 - cur_row_data);
-    		request->addAddr(diff_pim_p,no_b*block_row*32 - cur_row_data);
-
-    	}else{
-    		request->addAddr(data_b_p + i * no_b*block_row*32 ,no_b*block_row*32);
-    		request->addAddr(pim_start_address + b_p + i*_ncols*_nrows, no_b*block_row*32);
-    	}*/
     	}
 	}
     //update data_b_p and pim_b_p
