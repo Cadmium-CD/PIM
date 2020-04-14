@@ -750,12 +750,12 @@ System::system_sendRow_receiveCol(Request& req) {
             buffer_write_req.addAddr(dst_addr, req.size_list[i+1]);
             tot_clks += sendColBuffer(buffer_write_req);
         } else{
-            //DELETE printf("src %lu\n", src_addr);
+            //DELETEprintf("src %lu\n", src_addr);
             Request buffer_read_req(Request::Type::RowBufferRead);
             buffer_read_req.addAddr(src_addr, req.size_list[i]);
             tot_clks += sendRowBuffer(buffer_read_req);
 
-            //DELETE printf("dst %lu\n", dst_addr);
+            //DELETEprintf("dst %lu\n", dst_addr);
             Request buffer_write_req(Request::Type::ColBufferWrite);
             buffer_write_req.addAddr(dst_addr, req.size_list[i+1]);
             tot_clks += sendColBuffer(buffer_write_req);
@@ -896,7 +896,8 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     int no_a   = 10;     // Number of row in block which are occupied by A
     int no_b   = 10;     // Number of row in block which are occupied by B
     int block_row = 32; // Number of data can be stored in one row of block
-    int no_block = ceil((float)A_col / (float)block_row);
+    int block_col = 1024; // Number of data can be stored in one col of block
+    int no_block = ceil((float)A_col / (float)block_col);
     int a_sb_y = ceil((float)A_row/(float) no_a);
     int b_sb_x = ceil((float)B_col/(float) no_b);
 
@@ -907,8 +908,10 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     AddrT pim_b_p = 0;
     AddrT sum_p = 4000*_ncols*_nrows; //TODO
 
+
     data_a_p = storage_start_address;
     pim_a_p  = pim_start_address;
+
 
    	std::vector<Request> requests;
    	Request *request;
@@ -916,53 +919,65 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     //Fill all A to PIM unit
     request = new Request(Request::Type::SystemRow2Col);
     for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    	cout<<"Index of a block is: "<<a_y<<endl;
+    	cout<<"address of a block is: "<<data_a_p<<endl;
     	//Move a no_a rows of A to 32 blocks, each block has no_a*32 data.
     	if(a_y == a_sb_y -1){
     		for (int i = 0; i < no_block; i++){//i: index of the current block
     			for (int j = 0; j < A_row - a_y*no_a; j++){//i: index of the row in current block{
-    				request->addAddr(data_a_p + (i*no_a+j)*_ncols ,block_row*32);
-    				request->addAddr(pim_a_p + a_p  + j + i*_ncols*_nrows, block_row*32);
+    				//printf("addr %lu\n", data_a_p + (i*no_a+j)*_ncols);
+    				request->addAddr(data_a_p + (AddrT) ((i*no_a+j)*_ncols) ,block_row*32);
+    				request->addAddr(pim_a_p + (AddrT)(a_p  + j + i*_ncols*_nrows), block_row*32);
     			}
     		}
     		//update data_a_p and pim_a_p
-    		data_a_p =+ (AddrT) no_block*(A_col - a_y*no_a)*block_row*32;
-    		pim_a_p  =+ (AddrT) A_col/block_row*_ncols*_nrows;
+    		data_a_p = data_a_p + (AddrT) no_block*(A_col - a_y*no_a)*block_row*32;
+    		pim_a_p  = pim_a_p+ (AddrT) A_col/block_row*_ncols*_nrows;
     	}else{
     		for (int i = 0; i < no_block; i++){//i: index of the current block
     			for (int j = 0; j < no_a; j++){//i: index of the row in current block{
-    				request->addAddr(data_a_p + (i*no_a+j)*_ncols ,block_row*32);
-    				request->addAddr(pim_a_p + a_p  + j + i*_ncols*_nrows, block_row*32);
+    				request->addAddr(data_a_p + (AddrT) ((i*no_a+j)*_ncols) ,block_row*32);
+    				request->addAddr(pim_a_p + (AddrT)(a_p  + j + i*_ncols*_nrows), block_row*32);
     			}
     		}
     		//update data_a_p and pim_a_p
-    		data_a_p =+ (AddrT) no_block*no_a*block_row*32;
-    		pim_a_p  =+ (AddrT) A_col/block_row*_ncols*_nrows;
+    		data_a_p = data_a_p + (AddrT) no_block*no_a*block_row*32;
+    		pim_a_p  = pim_a_p +  (AddrT) A_col/block_row*_ncols*_nrows;
     	}
     }
     requests.push_back(*request);
 
-    data_b_p = data_a_p;
-    pim_b_p  = pim_start_address;
+    for (unsigned int i = 0; i < requests.size(); i++){
+        sendRequest(requests[i]);
+    }
+   	std::vector<Request>().swap(requests);
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*    data_b_p = data_a_p;
+    pim_b_p  = pim_start_address;
+
     //Fill block-col of B to each PIM
-for (int b_x = 0; b_x < b_sb_x; b_x++){// no of sub block in x direction
+//for (int b_x = 0; b_x < b_sb_x; b_x++){// no of sub block in x direction
+for (int b_x = 0; b_x < 1; b_x++){// no of sub block in x direction
     //Move a no_b cols of B to 32*ceil(A_rows/no_a) blocks, each block has no_b*32 data.
+	cout<<"Index of b block is: "<<b_x<<endl;
     request = new Request(Request::Type::SystemRow2Col);
     if(b_x == b_sb_x -1){
     	for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
     		for (int i = 0; i < no_block; i++){//i: index of the current block
     			for (int j = 0; j < B_col - b_x*no_b; j++){//j: index of the row in current block{
-    				request->addAddr(data_b_p + (i*no_b+j)*_ncols ,block_row*32);//TBD we need to clear the remaining bits
-    				request->addAddr(pim_b_p + b_p  + j + i*_ncols*_nrows + a_y*no_block*_ncols*_nrows, block_row*32);
+    				request->addAddr(data_b_p + (AddrT) ((i*no_b+j)*_ncols) ,block_row*32);//TBD we need to clear the remaining bits
+    				request->addAddr(pim_b_p + (AddrT) (b_p  + j + i*_ncols*_nrows + a_y*no_block*_ncols*_nrows), block_row*32);
     			}
     		}
     	}
     }else{
     	for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
+    		cout<<"Index of a_y is: "<<a_y<<endl;
     		for (int i = 0; i < no_block; i++){//i: index of the current block
     			for (int j = 0; j < no_b; j++){//j: index of the row in current block{
-    				request->addAddr(data_b_p + (i*no_b+j)*_ncols ,block_row*32);
-    				request->addAddr(pim_b_p + b_p  + j + i*_ncols*_nrows + a_y*no_block*_ncols*_nrows, block_row*32);
+    				request->addAddr(data_b_p + (AddrT) ((i*no_b+j)*_ncols) ,block_row*32);//TBD we need to clear the remaining bits
+    				request->addAddr(pim_b_p + (AddrT) (b_p  + j + i*_ncols*_nrows + a_y*no_block*_ncols*_nrows), block_row*32);
     			}
     		}
     	}
@@ -970,15 +985,13 @@ for (int b_x = 0; b_x < b_sb_x; b_x++){// no of sub block in x direction
     requests.push_back(*request);
 
     //update data_b_p and pim_b_p
-    data_b_p =+ (AddrT) no_block*block_row*no_b*32;
+    data_b_p = data_b_p + (AddrT) no_block*block_row*no_b*32;
 
+}*/
 
-
-}
-
-
-    //Start calculation, all the loaded block will start to this at the same time
+ /*   //Start calculation, all the loaded block will start to this at the same time
     for (int ii = 0; ii <no_a;ii++){//ii: index of current A col
+	cout<<"Index of a block is: "<<ii<<endl;
     	//Move col ii  of A to mul1
     	request = new Request(Request::Type::ColMv);
     	for (int a_y = 0; a_y < a_sb_y; a_y++){// no of sub block in y direction
@@ -1138,10 +1151,13 @@ for (int b_x = 0; b_x < b_sb_x; b_x++){// no of sub block in x direction
     		request->addAddr(storage_start_address + a_y* no_b*no_block*block_row*32 + ii*_ncols ,no_a*32);
     	}
     	requests.push_back(*request);
-    }
-
-    for (unsigned int i = 0; i < requests.size(); i++)
+    }*/
+/*
+    for (unsigned int i = 0; i < requests.size(); i++){
         sendRequest(requests[i]);
+    }
+   	std::vector<Request>().swap(requests);
+   	*/
 }
 
 void System::matrix_mul_balanced(int A_row, int A_col, int B_row, int B_col) 
