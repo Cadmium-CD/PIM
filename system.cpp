@@ -1007,7 +1007,7 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     	for (int i = 0; i < no_block; i++){//i: index of the set of partial sum/ equal to number of block
     		for (int j = 0; j < no_a; j++){//j: index of the col in current block{
     			request->addAddr(pim_start_address+ i*_ncols*_nrows+ ps_p + j ,32*32);
-    			request->addAddr(sum_p + (i)*_ncols*_nrows+ j ,32*32);
+    			request->addAddr(sum_p + (i/2)*_ncols*_nrows+ no_a*(i%2) + j ,32*32);
     		}
     	}
     	requests.push_back(*request);
@@ -1016,27 +1016,33 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     	for (int kk = 1; kk < block_row; kk++){//i: index of the set of partial sum// equal to number of block
     		//Move the next number to be added to the second row
     		request = new Request(Request::Type::RowMv);
-    		for (int i = 0; i < no_block; i++){//i: index of the set of partial sum// equal to number of block
-    			request->addAddr(sum_p + i*_ncols*_nrows + kk*_ncols,no_a*32);
-    			request->addAddr(sum_p + i*_ncols*_nrows + _ncols,no_a*32);
+    		for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
+    			request->addAddr(sum_p + i*_ncols*_nrows + kk*_ncols,no_a*2*32);
+    			request->addAddr(sum_p + i*_ncols*_nrows + _ncols,no_a*2*32);
     		}
     		requests.push_back(*request);
 
-    		//Add first two rows and store the results to the first row [10:19]
+    		//Add first two rows and store the results to the first/second rows [20:29]
     		request = new Request(Request::Type::ColAdd);
-    		for (int i = 0; i < no_block; i++){//i: index of the set of partial sum// equal to number of block
-    			for (int j = 0; j < no_a; j++){//j: index of the col in current block{
+    		for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
+    			for (int j = 0; j < no_a*2; j++){//j: index of the col in current block{
     				request->addAddr(sum_p + i*_ncols*_nrows + j ,2*32);
-    				request->addAddr(sum_p + i*_ncols*_nrows + no_a + j ,2*32);
+    				request->addAddr(sum_p + i*_ncols*_nrows + no_a + (j/10)*_ncols + (j%10) ,2*32);
     			}
     		}
     		requests.push_back(*request);
 
     		//Move the intermedia results to the begining of the first row
     		request = new Request(Request::Type::RowBitwise);
-    		for (int i = 0; i < no_block; i++){//i: index of the set of partial sum// equal to number of block
+    		for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
     			request->addAddr(sum_p + i*_ncols*_nrows + no_a,no_a*32);
     			request->addAddr(sum_p + i*_ncols*_nrows ,no_a*32);
+    		}
+    		requests.push_back(*request);
+    		request = new Request(Request::Type::RowMv);
+    		for (int i = 0; i < no_block/2; i++){//i: index of the set of partial sum// equal to number of block
+    			request->addAddr(sum_p + i*_ncols*_nrows + _ncols + no_a,no_a*32);
+    			request->addAddr(sum_p + i*_ncols*_nrows + no_a*2,no_a*32);
     		}
     		requests.push_back(*request);
 
@@ -1044,27 +1050,25 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     	//Do addition for all block_row blocks
     	//Move all the ps to the first block
     	request = new Request(Request::Type::SystemRow2Row);
-    	for (int i = 1; i < no_block; i++){//i: index of the current block
-    		request->addAddr(sum_p + i*_ncols*_nrows, no_a*32);
-    		request->addAddr(sum_p + i*_ncols ,no_a*32);
+    	for (int i = 1; i < no_block/2; i++){//i: index of the current block
+    		request->addAddr(sum_p + i*_ncols*_nrows, no_a*2*32);
+    		request->addAddr(sum_p + i*_ncols ,no_a*2*32);
     	}
     	requests.push_back(*request);
 
-    	//Do addtion
-    	for (int kk = 1; kk < block_row; kk++){//i: index of the set of partial sum// equal to number of block
+    	//Do addition
+    	for (int kk = 1; kk < block_row/2; kk++){//i: index of the set of partial sum// equal to number of block
     		//Move the next number to be added to the second row
     		request = new Request(Request::Type::RowMv);
-    		request->addAddr(sum_p + kk*_ncols,no_a*32);
-    		request->addAddr(sum_p + _ncols,no_a*32);
+    		request->addAddr(sum_p + kk*_ncols,no_a*2*32);
+    		request->addAddr(sum_p + _ncols,no_a*2*32);
     		requests.push_back(*request);
 
     		//Add first two rows and store the results to the first row [10:19]
     		request = new Request(Request::Type::ColAdd);
-    		for (int i = 0; i < no_block; i++){//i: index of the set of partial sum// equal to number of block
-    			for (int j = 0; j < no_a; j++){//j: index of the col in current block{
-    				request->addAddr(sum_p + i*_ncols*_nrows + j ,2*32);
-    				request->addAddr(sum_p + i*_ncols*_nrows + no_a + j ,2*32);
-    			}
+    		for (int j = 0; j < no_a*2; j++){//j: index of the col in current block{
+    			request->addAddr(sum_p + j ,2*32);
+   				request->addAddr(sum_p + no_a + (j/10)*_ncols + (j%10) ,2*32);
     		}
     		requests.push_back(*request);
 
@@ -1074,7 +1078,23 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     		request->addAddr(sum_p , no_a*32);
     		requests.push_back(*request);
 
+    		request = new Request(Request::Type::RowMv);
+    		request->addAddr(sum_p + _ncols + no_a,no_a*32);
+    		request->addAddr(sum_p + no_a*2,no_a*32);
+    		requests.push_back(*request);
     	}
+    		request = new Request(Request::Type::RowMv);
+    		request->addAddr(sum_p ,no_a*32);
+    		request->addAddr(sum_p + _ncols + no_a,no_a*32);
+    		requests.push_back(*request);
+
+    		request = new Request(Request::Type::ColAdd);
+    		for (int i = 0; i < no_a; i++){//j: index of the col in current block{
+    			request->addAddr(sum_p + no_a ,2*32);
+    			request->addAddr(sum_p ,no_a*32);
+    		}
+    		requests.push_back(*request);
+
     	//Store the 10 result back to storage unit
     	request = new Request(Request::Type::SystemRow2Row);
     	request->addAddr(sum_p, no_a*32);
