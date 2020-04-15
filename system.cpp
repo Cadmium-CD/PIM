@@ -891,7 +891,78 @@ System::system_sendCol_receiveCol(Request& req) {
 
 void System::matrix_mul_area_optimized(int A_row, int A_col, int B_row, int B_col) 
 {
-/*Write your code here*/
+    AddrT storage_start_address =  (AddrT)_ncols *_nrows * _nblocks * _ntiles / 4 * 3; // use the last 3/4 for storage units
+    AddrT pim_start_address = 0;
+
+    int mul1_p = 0;
+    int mul2_p = 1;
+    int no_a_in_blk = 10;
+    int no_b_in_blk = 10;
+    int height = 40;
+    int a_p    = mul1_p;
+    int b_p    = 2;
+    int ps_p   = 12;
+
+    AddrT data_a_p = 0;
+    AddrT data_b_p = 0;
+    AddrT pim_p = 0;
+    AddrT sum_p = 4000*_ncols*_nrows; //TODO
+
+
+    pim_p  = pim_start_address;
+    data_a_p = storage_start_address;
+    data_b_p = storage_start_address + (AddrT) 2*256*1024*1024*32;
+
+
+   	std::vector<Request> requests;
+   	Request *request;
+   	//Loop to traverse A
+    for (int a_ii = 0; a_ii < A_row/no_a_in_blk;a_ii++){
+//------------------------transmit ten A col to the block 0------------------------------------------//
+    	request = new Request(Request::Type::SystemCol2Col);
+    	for (int n_a_row = 0; n_a_row < no_a_in_blk; n_a_row++){
+    		for (int ii = 0; ii < 2; ii++){// no of blocks used
+    			request->addAddr(data_a_p + (AddrT)(a_ii * no_a_in_blk* 2 + n_a_row *2 + ii), 20*32);
+    			request->addAddr(pim_p  + (AddrT) (n_a_row * + a_p + ii) ,20*32);
+    		}
+    	}
+    	requests.push_back(*request);
+                 //-----------Shift A ------------//
+    	request = new Request(Request::Type::ColBitwise);
+    	for (int n_a_row = 0; n_a_row < no_a_in_blk; n_a_row++){
+    		request->addAddr(pim_p  + (AddrT) (mul2_p) ,20*32);//In real case, we need to define the location of each A col
+    	}
+    	requests.push_back(*request);
+                 //-----------ColMv A ------------//
+
+    	request = new Request(Request::Type::ColMv);
+    	for (int n_a_row = 0; n_a_row < no_a_in_blk; n_a_row++){
+    		//request->addAddr(pim_p  + (AddrT) (n_b_blk * _ncols*_nrows + a_p + 2) ,20*32);
+    		//request->addAddr(pim_p  + (AddrT) (n_b_blk * _ncols*_nrows + a_p ) ,20*32);
+    	}
+    	requests.push_back(*request);
+
+    	//Loop to traverse B
+    	for (int b_ii = 0; b_ii <B_col/no_b_in_blk;b_ii++){
+//------------------------transmit ten B col to the block 0------------------------------------------//
+    		//loop to traverse 10 B in the block
+    		for (int b_i = 0; b_i <no_b_in_blk;b_i++){
+    			//loop to do multiplication
+    			for (int m_i = 0; m_i <height;m_i++){
+
+    			}
+    		}
+    		//loop to do addition
+    		for (int add_i = 1; add_i <height;add_i++){
+
+    		}
+    		//loop to send sum back to storage unit
+    		for (int r_i = 0; r_i <no_b_in_blk;r_i++){
+
+    		}
+    	}
+    }
+
 }
 
 void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_col) 
@@ -969,8 +1040,10 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
 //shift
     request = new Request(Request::Type::ColBitwise);
     for (int n_b_blk= 0; n_b_blk < no_block;n_b_blk++){//i: index of current A row
-    	request->addAddr(pim_a_p  + (AddrT) (n_b_blk * _ncols*_nrows + a_p + 2) ,20*32);
-    	request->addAddr(pim_b_p  + (AddrT) (n_b_blk * _ncols*_nrows + b_p + 2) ,20*32);
+    	for (int no_bit_byte= 0; no_bit_byte < 32;no_bit_byte++){//i: index of current A row
+    		request->addAddr(pim_a_p  + (AddrT) (n_b_blk * _ncols*_nrows + (a_p + 2 + no_bit_byte)*32) ,20);
+    		request->addAddr(pim_b_p  + (AddrT) (n_b_blk * _ncols*_nrows + (b_p + 2 + no_bit_byte)*32) ,20);
+    	}
     }
     requests.push_back(*request);
 
@@ -982,10 +1055,10 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
 //ColMv
     request = new Request(Request::Type::ColMv);
     for (int n_b_blk= 0; n_b_blk < no_block;n_b_blk++){//i: index of current A row
-    	request->addAddr(pim_a_p  + (AddrT) (n_b_blk * _ncols*_nrows + a_p + 2) ,20*32);
-    	request->addAddr(pim_a_p  + (AddrT) (n_b_blk * _ncols*_nrows + a_p ) ,20*32);
-    	request->addAddr(pim_b_p  + (AddrT) (n_b_blk * _ncols*_nrows + b_p + 2) ,20*32);
-    	request->addAddr(pim_b_p  + (AddrT) (n_b_blk * _ncols*_nrows + b_p) ,20*32);
+    		request->addAddr(pim_a_p  + (AddrT) (n_b_blk * _ncols*_nrows + (a_p + 2)) ,20);
+    		request->addAddr(pim_a_p  + (AddrT) (n_b_blk * _ncols*_nrows + (a_p + 2)) ,20);
+    		request->addAddr(pim_a_p  + (AddrT) (n_b_blk * _ncols*_nrows + (b_p) ) ,20);
+    		request->addAddr(pim_a_p  + (AddrT) (n_b_blk * _ncols*_nrows + (b_p) ) ,20);
     }
     requests.push_back(*request);
 
@@ -1032,9 +1105,11 @@ void System::matrix_mul_time_optimized(int A_row, int A_col, int B_row, int B_co
     }
     requests.push_back(*request);
     for (unsigned int i = 0; i < requests.size(); i++){
-    	sendRequest(requests[i]);
+    	//sendRequest(requests[i]);
     }
     std::vector<Request>().swap(requests);
+
+
 
 
 
