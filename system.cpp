@@ -895,16 +895,12 @@ void System::matrix_mul_area_optimized(int A_row, int A_col, int B_row, int B_co
     AddrT pim_start_address = 0;
 
     int mul1_p = 0;
-    int mul2_p = 1;
-    int no_a_in_blk = 10;
-    int no_b_in_blk = 10;
     int height = 40;
     int a_p    = mul1_p;
     int b_p    = 2;
-    int ps_p   = 12;
 
     AddrT data_a_p = 0;
-    AddrT data_b_p = 0;
+    AddrT data_b_p = 200*_ncols*_nrows;
     AddrT pim_p = 0;
     AddrT sum_p = 4000*_ncols*_nrows; //TODO
 
@@ -917,51 +913,76 @@ void System::matrix_mul_area_optimized(int A_row, int A_col, int B_row, int B_co
    	std::vector<Request> requests;
    	Request *request;
    	//Loop to traverse A
-    for (int a_ii = 0; a_ii < A_row/no_a_in_blk;a_ii++){
-//------------------------transmit ten A col to the block 0------------------------------------------//
+   	//for (int a_ii = 0; a_ii < A_row;a_ii++){
+   	for (int a_ii = 0; a_ii < 10;a_ii++){
+//------------------------transmit one A row to the block 0------------------------------------------//
     	request = new Request(Request::Type::SystemCol2Col);
-    	for (int n_a_row = 0; n_a_row < no_a_in_blk; n_a_row++){
-    		for (int ii = 0; ii < 2; ii++){// no of blocks used
-    			request->addAddr(data_a_p + (AddrT)(a_ii * no_a_in_blk* 2 + n_a_row *2 + ii), 20*32);
-    			request->addAddr(pim_p  + (AddrT) (n_a_row * + a_p + ii) ,20*32);
-    		}
+    	for (int ii = 0; ii < 2; ii++){// no of blocks used
+    		request->addAddr(data_a_p + (AddrT)(a_ii*2  + ii), 20*32);
+    		request->addAddr(pim_p  + (AddrT) (a_p + ii*2) ,20*32);
     	}
     	requests.push_back(*request);
                  //-----------Shift A ------------//
     	request = new Request(Request::Type::ColBitwise);
-    	for (int n_a_row = 0; n_a_row < no_a_in_blk; n_a_row++){
-    		request->addAddr(pim_p  + (AddrT) (mul2_p) ,20*32);//In real case, we need to define the location of each A col
+    	for (int no_bit_byte= 0; no_bit_byte < 32;no_bit_byte++){//i: index of current A row
+    		request->addAddr(pim_p  + (AddrT)(32 + no_bit_byte) ,20);//In real case, we need to define the location of each A col
     	}
     	requests.push_back(*request);
-                 //-----------ColMv A ------------//
-
+                 //-----------ColMv A to get complete one colum------------//
     	request = new Request(Request::Type::ColMv);
-    	for (int n_a_row = 0; n_a_row < no_a_in_blk; n_a_row++){
-    		//request->addAddr(pim_p  + (AddrT) (n_b_blk * _ncols*_nrows + a_p + 2) ,20*32);
-    		//request->addAddr(pim_p  + (AddrT) (n_b_blk * _ncols*_nrows + a_p ) ,20*32);
-    	}
+    	request->addAddr(pim_p  + (AddrT) (a_p + 2) ,20*32);
+    	request->addAddr(pim_p  + (AddrT) (a_p) ,20*32);
     	requests.push_back(*request);
 
     	//Loop to traverse B
-    	for (int b_ii = 0; b_ii <B_col/no_b_in_blk;b_ii++){
-//------------------------transmit ten B col to the block 0------------------------------------------//
-    		//loop to traverse 10 B in the block
-    		for (int b_i = 0; b_i <no_b_in_blk;b_i++){
-    			//loop to do multiplication
-    			for (int m_i = 0; m_i <height;m_i++){
-
-    			}
+    	for (int b_ii = 0; b_ii <B_col;b_ii++){
+//------------------------transmit one B col to the block 0------------------------------------------//
+    		request = new Request(Request::Type::SystemCol2Col);
+    		for (int ii = 0; ii < 2; ii++){// no of blocks used
+    			request->addAddr(data_b_p + (AddrT)(b_ii*2  + ii), 20*32);
+    			request->addAddr(pim_p  + (AddrT) (b_p + ii*2) ,20*32);
     		}
+    		requests.push_back(*request);
+                 //-----------Shift B ------------//
+    		request = new Request(Request::Type::ColBitwise);
+    		for (int no_bit_byte= 0; no_bit_byte < 32;no_bit_byte++){//i: index of current A row
+    			request->addAddr(pim_p  + (AddrT)(3*32 + no_bit_byte) ,20);//In real case, we need to define the location of each A col
+    		}
+    		requests.push_back(*request);
+                 //-----------ColMv B to get complete one colum------------//
+    		request = new Request(Request::Type::ColMv);
+    		request->addAddr(pim_p  + (AddrT) (b_p + 2) ,20*32);
+    		request->addAddr(pim_p  + (AddrT) (b_p) ,20*32);
+    		requests.push_back(*request);
+//------------------------Calculation------------------------------------------//
+    		//loop to do multiplication
+    		request = new Request(Request::Type::RowMul);
+    		for (int m_i = 0; m_i <height;m_i++){
+    			request->addAddr(pim_p  + (AddrT) (m_i*_ncols) ,2*32); //The results is stored at sum_p
+    		}
+    		requests.push_back(*request);
     		//loop to do addition
     		for (int add_i = 1; add_i <height;add_i++){
-
+    			request = new Request(Request::Type::ColAdd);
+    			request->addAddr(pim_p,2*32);//The results will be stored at the end of this col
+    			requests.push_back(*request);
     		}
-    		//loop to send sum back to storage unit
-    		for (int r_i = 0; r_i <no_b_in_blk;r_i++){
 
+    		//send sum back to storage unit
+    		request = new Request(Request::Type::SystemRow2Row);
+    		request->addAddr(pim_p  + (AddrT) (2*height -1 ) ,32);//The results will be stored at the end of this col
+    		request->addAddr(sum_p ,32);//The results will be stored at the end of this col
+    		requests.push_back(*request);
+    		//update sum_p to the next block
+    		sum_p = sum_p + (AddrT)  _ncols*_nrows;
+    		//issure request
+    		for (unsigned int i = 0; i < requests.size(); i++){
+    			sendRequest(requests[i]);
     		}
-    	}
-    }
+    		std::vector<Request>().swap(requests);
+
+    	}//loop to traverse B
+    }//loop to traverse A
 
 }
 
